@@ -15,6 +15,7 @@
         window.addEventListener('load', init);
 
         function init() {
+            // console.log(Object.keys(THREE.VRMSchema.BlendShapePresetName))
             // サイズを指定
             const width = 1600;
             const height = 900;
@@ -52,8 +53,11 @@
             const ambientLight = new THREE.AmbientLight(0x000000);
             scene.add(ambientLight);
 
+            // 各種データ
             var vrm_objects = Array(4).fill(null)
             var vrm_datas = Array(4).fill(null)
+            var original_heights = Array(4).fill(null)
+            var original_legs = Array(4).fill(null)
             const positions = Array(4).fill(null)
             const radius = 0.5
             for (let i = 0; i < 4; i++) {
@@ -63,7 +67,6 @@
                     radius * Math.cos(i * 2 * Math.PI / 4)
                 ]
             }
-            console.log(positions[0])
 
             //Cubeの作成
             var geometry = new THREE.BoxGeometry(20, 20, 20);
@@ -76,7 +79,6 @@
 
             //loader
             function vrm_loading(vrm_path, i) {
-                console.log(i);
                 const loader = new THREE.GLTFLoader();
                 loader.load(
                     vrm_path,
@@ -84,13 +86,23 @@
                         THREE.VRM.from(gltf).then((vrm) => {
                             vrm_datas[i] = vrm
                             vrm_objects[i] = vrm.scene
-                                // vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Joy, 1.0)
-                                // vrm.blendShapeProxy.update()
                             normalPose(vrm)
                             var pos = positions[i]
                             vrm_objects[i].position.set(pos[0], 0, pos[2]);
                             vrm_objects[i].rotateY(2 * i * Math.PI / 4)
                             scene.add(vrm_objects[i])
+                            //目の高さを記憶
+                            var eye = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftEye)
+                            world_eye = new THREE.Vector3()
+                            eye.getWorldPosition(world_eye)
+                            world_eye.x = 0
+                            original_heights[i] = world_eye
+                            //足の長さを記憶
+                            var leg = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftUpperLeg)
+                            world_leg = new THREE.Vector3()
+                            leg.getWorldPosition(world_leg)
+                            world_leg.x = 0
+                            original_legs[i] = world_leg
                         });
                     },
                     (progress) => console.log('Loading model...', 100.0 * (progress.loaded / progress.total), '%'),
@@ -104,7 +116,6 @@
                 fileinputs[i] = document.getElementById('avatar' + (i + 1))
                 fileinputs[i].addEventListener('click', (e) => {
                     e.target.value = '';
-                    console.log('value erased at ' + (i + 1));
                 })
                 fileinputs[i].addEventListener('change', {
                     i: i,
@@ -113,13 +124,11 @@
             }
 
             function handleFile(e) {
-                console.log('hoge')
                 const itr_num = this.i;
                 const file = e.currentTarget.files[0];
                 var reader = new FileReader();
                 reader.readAsDataURL(file);
                 scene.remove(vrm_objects[this.i]);
-                console.log(itr_num)
                 reader.onload = function() {
                     vrm_loading(reader.result, itr_num);
                 }
@@ -165,17 +174,27 @@
                 }
             }
 
-            function calcHeight(bone) {
-                if (bone.parent.name) {
-                    return bone.position.y + calcHeight(bone.parent)
-                } else {
-                    return 0
-                }
-            }
-
             setInterval(angleCheck, 10)
             setInterval(joyCheck, 2000)
             setInterval(blink, 100)
+
+            var sum  = function(arr) {
+                return arr.reduce(function(prev, current, i, arr) {
+                    return prev+current;
+                });
+            };
+
+            function isNoExpression(vrm){
+                const keys = Object.values(THREE.VRMSchema.BlendShapePresetName)
+                keyvalues = keys.map(key => {
+                    if(key === 'unknown'){
+                        return 0;
+                    }else{
+                    return vrm.blendShapeProxy.getValue(key)
+                    }
+                })
+                return sum(keyvalues) === 0
+            }
 
             function blink() {
                 for (let i = 0; i < 4; i++) {
@@ -184,11 +203,10 @@
                         var object = vrm_objects[i]
                         var blinkValue = vrm.blendShapeProxy.getValue(THREE.VRMSchema.BlendShapePresetName.Blink)
                         var joyValue = vrm.blendShapeProxy.getValue(THREE.VRMSchema.BlendShapePresetName.Joy)
-                            // console.log(blinkValue)
                         if (blinkValue === 0) {
                             var rand = Math.random()
-                            if (rand > .9 && joyValue === 0) {
-                                vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Blink, 1)
+                            if (rand > .9 && isNoExpression(vrm)) {
+                                vrm.blendShapeProxy.setValue('blink', 1)
                             }
                         } else {
                             vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Blink, 0)
@@ -199,17 +217,14 @@
             }
 
             function joyCheck() {
-                // console.log(camera.rotation)
                 for (let i = 0; i < 4; i++) {
                     if (vrm_objects[i]) {
                         var vrm = vrm_datas[i]
                         var object = vrm_objects[i]
-                        var head = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Head)
-                        const height = calcHeight(head)
-                        const diff = camera.position.y - height
+                        var height = original_heights[i].y
                         var head_vec = new THREE.Vector3(
                             object.position.x,
-                            diff,
+                            camera.position.y - height,
                             object.position.z,
                         )
                         head_vec.normalize()
@@ -228,7 +243,7 @@
                         }
                     }
                 }
-            }
+            } 
 
             function angleCheck() {
                 // console.log(camera.rotation)
@@ -237,36 +252,38 @@
                         var vrm = vrm_datas[i]
                         var object = vrm_objects[i]
                         var head = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Head)
-                        const height = calcHeight(head)
-                        const diff = camera.position.y - height
-                        if (diff > 0) {
+                        const diff = camera.position.y - original_heights[i].y
+                        if (diff >= 0) {
                             head.rotation.x = Math.atan2(diff, radius)
-                            var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
-                        } else {
+
+                        }else if(diff >= -.5){
+                            var chest = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Chest)
+                            chest.rotation.x = Math.atan2(diff, radius)
+                        }else{
+                            var bendAngle = Math.atan2(-.25 + diff/2,radius)
                             var chest = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Chest)
                             var spine = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Spine)
-                            chest.rotation.x = Math.atan2(diff, radius)
-                                // var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
-                                // hips.position.y = diff / 2
+                            chest.rotation.x = bendAngle
+                            var over_diff = diff + .5
                             var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
                             var armo = hips.parent
+                            armo.position.y = over_diff
                             var LUL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftUpperLeg)
                             var LLL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftLowerLeg)
                             var LF = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftFoot)
                             var RUL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightUpperLeg)
                             var RLL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightLowerLeg)
                             var RF = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightFoot)
-                            var leg_length = calcHeight(hips) - calcHeight(LF)
-                            var bendAngle = Math.acos((leg_length + diff) / leg_length)
-                            LUL.rotation.x = bendAngle
-                            LUL.rotation.z = -bendAngle / 20
-                            LLL.rotation.x = -bendAngle * 1.2
-                            LF.rotation.x = bendAngle / 4
-                            RUL.rotation.x = bendAngle
-                            RUL.rotation.z = bendAngle / 20
-                            RLL.rotation.x = -bendAngle * 1.2
-                            RF.rotation.x = bendAngle / 4
-                            armo.position.y = diff / 2
+                            var leg_length = original_legs[i]
+                            var legBendAngle = Math.acos((leg_length.y + over_diff) / leg_length.y)
+                            LUL.rotation.x = legBendAngle * 2
+                            LUL.rotation.z = -legBendAngle / 20
+                            LLL.rotation.x = -legBendAngle * 3
+                            LF.rotation.x = legBendAngle / 4
+                            RUL.rotation.x = legBendAngle * 2
+                            RUL.rotation.z = legBendAngle / 20
+                            RLL.rotation.x = -legBendAngle * 3
+                            RF.rotation.x = legBendAngle / 4
                         }
                     }
                 }
