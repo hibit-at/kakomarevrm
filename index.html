@@ -1,0 +1,319 @@
+{% load static %}
+
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <script src="{% static 'three.js' %}"></script>
+    <script src="{% static 'OrbitControls.js' %}"></script>
+    <script src="{% static 'GLTFLoader.js' %}"></script>
+    <script src="{% static 'three-vrm.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'style.css' %}">
+
+    <script>
+        // ページの読み込みを待つ
+        window.addEventListener('load', init);
+
+        function init() {
+            // サイズを指定
+            const width = 1600;
+            const height = 900;
+
+            // レンダラーを作成
+            const canvasElement = document.querySelector('#myCanvas');
+            const renderer = new THREE.WebGLRenderer({
+                canvas: canvasElement,
+                alpha: true
+            });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(width, height);
+
+            // シーンを作成
+            const scene = new THREE.Scene();
+
+            // カメラを作成
+            const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 10000);
+            // カメラの初期座標を設定
+            camera.position.set(0, 1.2, 0);
+
+            // カメラコントローラーを作成
+            const controls = new THREE.OrbitControls(camera, canvasElement);
+            camera.rotation.order = 'YZX'
+            controls.target.set(0, 1.2, 0.01);
+            controls.maxDistance = 0.1;
+            controls.minDistance = 0.05;
+            controls.update();
+
+            // 平行光源を作成
+            const directionalLight = new THREE.DirectionalLight(0xaaaaaa);
+            scene.add(directionalLight);
+
+            // 環境光を追加
+            const ambientLight = new THREE.AmbientLight(0x000000);
+            scene.add(ambientLight);
+
+            var vrm_objects = Array(4).fill(null)
+            var vrm_datas = Array(4).fill(null)
+            const positions = Array(4).fill(null)
+            const radius = 0.5
+            for (let i = 0; i < 4; i++) {
+                positions[i] = [
+                    radius * Math.sin(i * 2 * Math.PI / 4),
+                    0,
+                    radius * Math.cos(i * 2 * Math.PI / 4)
+                ]
+            }
+            console.log(positions[0])
+
+            //Cubeの作成
+            var geometry = new THREE.BoxGeometry(20, 20, 20);
+            var material = new THREE.MeshPhongMaterial({
+                color: '#ffffff'
+            });
+            var cube = new THREE.Mesh(geometry, material);
+            cube.position.set(0, -10, 0);
+            scene.add(cube);
+
+            //loader
+            function vrm_loading(vrm_path, i) {
+                console.log(i);
+                const loader = new THREE.GLTFLoader();
+                loader.load(
+                    vrm_path,
+                    (gltf) => {
+                        THREE.VRM.from(gltf).then((vrm) => {
+                            vrm_datas[i] = vrm
+                            vrm_objects[i] = vrm.scene
+                                // vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Joy, 1.0)
+                                // vrm.blendShapeProxy.update()
+                            normalPose(vrm)
+                            var pos = positions[i]
+                            vrm_objects[i].position.set(pos[0], 0, pos[2]);
+                            vrm_objects[i].rotateY(2 * i * Math.PI / 4)
+                            scene.add(vrm_objects[i])
+                        });
+                    },
+                    (progress) => console.log('Loading model...', 100.0 * (progress.loaded / progress.total), '%'),
+                    (error) => console.error(error)
+                )
+            }
+
+            var fileinputs = Array(4).fill(null)
+
+            for (let i = 0; i < 4; i++) {
+                fileinputs[i] = document.getElementById('avatar' + (i + 1))
+                fileinputs[i].addEventListener('click', (e) => {
+                    e.target.value = '';
+                    console.log('value erased at ' + (i + 1));
+                })
+                fileinputs[i].addEventListener('change', {
+                    i: i,
+                    handleEvent: handleFile,
+                })
+            }
+
+            function handleFile(e) {
+                console.log('hoge')
+                const itr_num = this.i;
+                const file = e.currentTarget.files[0];
+                var reader = new FileReader();
+                reader.readAsDataURL(file);
+                scene.remove(vrm_objects[this.i]);
+                console.log(itr_num)
+                reader.onload = function() {
+                    vrm_loading(reader.result, itr_num);
+                }
+            }
+
+            document.addEventListener('keypress', (e) => {
+                if (e.key === 'w') {
+                    now = camera.position
+                    camera.position.y += 0.02
+                    controls.target.y += 0.02
+                }
+                if (e.key === 's') {
+                    now = camera.position
+                    if (camera.position.y > 0) {
+                        camera.position.y -= 0.02
+                        controls.target.y -= 0.02
+                    }
+                }
+            })
+
+            const normalPose = (vrm) => {
+                const leftUpperArm = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftUpperArm)
+                leftUpperArm.rotateZ(1.2)
+                const rightUpperArm = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightUpperArm)
+                rightUpperArm.rotateZ(-1.2)
+            }
+
+            const debugbutton = document.getElementById('debug')
+            debugbutton.addEventListener('click', debug)
+            const erasebutton = document.getElementById('erase')
+            erasebutton.addEventListener('click', erase)
+
+            function debug() {
+                erase()
+                for (let i = 0; i < 4; i++) {
+                    vrm_loading('{% static 'AliciaSolid.vrm' %}', i)
+                }
+            }
+
+            function erase() {
+                for (let i = 0; i < 4; i++) {
+                    scene.remove(vrm_objects[i])
+                }
+            }
+
+            function calcHeight(bone) {
+                if (bone.parent.name) {
+                    return bone.position.y + calcHeight(bone.parent)
+                } else {
+                    return 0
+                }
+            }
+
+            setInterval(angleCheck, 10)
+            setInterval(joyCheck, 2000)
+            setInterval(blink, 100)
+
+            function blink() {
+                for (let i = 0; i < 4; i++) {
+                    if (vrm_objects[i]) {
+                        var vrm = vrm_datas[i]
+                        var object = vrm_objects[i]
+                        var blinkValue = vrm.blendShapeProxy.getValue(THREE.VRMSchema.BlendShapePresetName.Blink)
+                        var joyValue = vrm.blendShapeProxy.getValue(THREE.VRMSchema.BlendShapePresetName.Joy)
+                            // console.log(blinkValue)
+                        if (blinkValue === 0) {
+                            var rand = Math.random()
+                            if (rand > .9 && joyValue === 0) {
+                                vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Blink, 1)
+                            }
+                        } else {
+                            vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Blink, 0)
+                        }
+                        vrm.blendShapeProxy.update()
+                    }
+                }
+            }
+
+            function joyCheck() {
+                // console.log(camera.rotation)
+                for (let i = 0; i < 4; i++) {
+                    if (vrm_objects[i]) {
+                        var vrm = vrm_datas[i]
+                        var object = vrm_objects[i]
+                        var head = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Head)
+                        const height = calcHeight(head)
+                        const diff = camera.position.y - height
+                        var head_vec = new THREE.Vector3(
+                            object.position.x,
+                            diff,
+                            object.position.z,
+                        )
+                        head_vec.normalize()
+                        camera_vec = new THREE.Vector3(
+                            Math.sin(camera.rotation.y) * Math.cos(camera.rotation.x),
+                            Math.sin(camera.rotation.x),
+                            Math.cos(camera.rotation.y) * Math.cos(camera.rotation.x),
+                        )
+                        const inner = camera_vec.dot(head_vec)
+                        if (Math.abs(inner) > 0.9) {
+                            vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Joy, 1.0)
+                            vrm.blendShapeProxy.update()
+                        } else {
+                            vrm.blendShapeProxy.setValue(THREE.VRMSchema.BlendShapePresetName.Joy, 0.0)
+                            vrm.blendShapeProxy.update()
+                        }
+                    }
+                }
+            }
+
+            function angleCheck() {
+                // console.log(camera.rotation)
+                for (let i = 0; i < 4; i++) {
+                    if (vrm_objects[i]) {
+                        var vrm = vrm_datas[i]
+                        var object = vrm_objects[i]
+                        var head = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Head)
+                        const height = calcHeight(head)
+                        const diff = camera.position.y - height
+                        if (diff > 0) {
+                            head.rotation.x = Math.atan2(diff, radius)
+                            var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
+                        } else {
+                            var chest = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Chest)
+                            var spine = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Spine)
+                            chest.rotation.x = Math.atan2(diff, radius)
+                                // var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
+                                // hips.position.y = diff / 2
+                            var hips = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips)
+                            var armo = hips.parent
+                            var LUL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftUpperLeg)
+                            var LLL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftLowerLeg)
+                            var LF = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.LeftFoot)
+                            var RUL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightUpperLeg)
+                            var RLL = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightLowerLeg)
+                            var RF = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.RightFoot)
+                            var leg_length = calcHeight(hips) - calcHeight(LF)
+                            var bendAngle = Math.acos((leg_length + diff) / leg_length)
+                            LUL.rotation.x = bendAngle
+                            LUL.rotation.z = -bendAngle / 20
+                            LLL.rotation.x = -bendAngle * 1.2
+                            LF.rotation.x = bendAngle / 4
+                            RUL.rotation.x = bendAngle
+                            RUL.rotation.z = bendAngle / 20
+                            RLL.rotation.x = -bendAngle * 1.2
+                            RF.rotation.x = bendAngle / 4
+                            armo.position.y = diff / 2
+                        }
+                    }
+                }
+            }
+
+            tick();
+
+            // 毎フレーム時に実行されるループイベントです
+            function tick() {
+                // レンダリング
+                renderer.render(scene, camera);
+                requestAnimationFrame(tick);
+                // angleCheck();
+            }
+
+        }
+    </script>
+</head>
+
+<body>
+    <h1>囲まれVRM!!</h1>
+    <canvas id="myCanvas"></canvas>
+    <p>
+        Avatar1 <input type="file" id="avatar1">
+    </p>
+    <p>
+        Avatar2 <input type="file" id="avatar2">
+    </p>
+    <p>
+        Avatar3 <input type="file" id="avatar3">
+    </p>
+    <p>
+        Avatar4 <input type="file" id="avatar4">
+    </p>
+    <h2>使い方</h2>
+    <p>上の「ファイルを選択」からVRMを選択してください。データはブラウザで完結し、サーバーには残らないのでご安心ください。</p>
+    <p>カメラ（視点）が移動すると、アバター達もそれに合わせて顔や体をあなたに向けてくれます。</p>
+    <p>アバターと目線が合うと笑ってくれます。（ブレンドシェイプ「JOY」を設定している場合に限ります）</p>
+    <p>マウスドラッグ：カメラの目線が移動します。<p>
+    <p>マウススクロール：カメラの前後が変化します。（少ししか移動できません）<p>
+    <p>Wキー／Sキー：カメラの上下が変化します。（地面より下にはいけません）</p>
+    <p>「AllAlicia」ボタン：とりあえず4人全員アリシアちゃんにします。</p>
+    <p>「erase」ボタン：すべてのアバターを消します。</p>
+    <p>
+        <input type="button" value="AllAlicia" id="debug">
+        <input type="button" value="erase" id="erase">
+    </p>
+</body>
+
+</html>
